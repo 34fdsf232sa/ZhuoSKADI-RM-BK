@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 import time
 import sys
-
+ 
 from berxel_camera import BerxelCamera
 from depth_slam_obstacle import DepthSLAMObstacleDetector
 

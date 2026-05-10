@@ -1,0 +1,54 @@
+# =============================================================================
+# FAST_LIO 配置 — Unitree L2 LiDAR
+# 使用 L2 的 360° 点云 + IMU 进行里程计估计
+# =============================================================================
+# 启动方式:
+#   ros2 launch mapless_nav sensors.launch.py     # 先启动传感器
+#   ros2 launch fast_lio mapping.launch.py config_file:=fastlio_l2.yaml
+#
+# 输出:
+#   /Odometry (nav_msgs/Odometry)
+#   /tf: odom -> base_link
+# =============================================================================
+/**:
+    ros__parameters:
+        feature_extract_enable: false
+        point_filter_num: 3
+        max_iteration: 3
+        filter_size_surf: 0.3
+        filter_size_map: 0.5
+        cube_side_length: 1000.0
+        runtime_pos_log_enable: false
+        map_file_path: "./l2_map.pcd"
+
+        common:
+            lid_topic:  "/unilidar/cloud"
+            imu_topic:  "/unilidar/imu"
+            time_sync_en: false
+            time_offset_lidar_to_imu: 0.0
+
+        preprocess:
+            lidar_type: 4                # 4 = generic pointcloud (L2 is not Livox-style)
+            scan_line: 1
+            blind: 0.3
+            timestamp_unit: 3
+            scan_rate: 10
+
+        mapping:
+            acc_cov: 0.2
+            gyr_cov: 0.05
+            b_acc_cov: 0.0001
+            b_gyr_cov: 0.0001
+            fov_degree: 360.0
+            det_range: 100.0
+            extrinsic_est_en: false
+            extrinsic_T: [0.0, 0.0, 0.5]
+            extrinsic_R: [ 1., 0., 0.,
+                           0., 1., 0.,
+                           0., 0., 1.]
+
+        publish:
+            path_en: true
+            path_publish_rate: 10.0
+            publish_tf: true             # Publish odom -> base_link TF
+            publish_odom_topic: "/odom_raw"  # Relay through real_odom_node

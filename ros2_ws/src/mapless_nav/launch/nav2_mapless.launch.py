@@ -34,6 +34,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     use_rviz = LaunchConfiguration('use_rviz')
+    odom_mode = LaunchConfiguration('odom_mode')
     
     # Config file
     nav2_params_file = os.path.join(mapless_nav_dir, 'config', 'nav2_mapless_params.yaml')
@@ -56,16 +57,26 @@ def generate_launch_description():
         default_value='true',
         description='Launch RViz for visualization'
     )
-    
+
+    declare_odom_mode = DeclareLaunchArgument(
+        'odom_mode',
+        default_value='fake',
+        choices=['fake', 'l2_imu', 'external'],
+        description='Odometry mode: fake (testing), l2_imu (L2 IMU), external (FAST_LIO/slam_toolbox)'
+    )
+
     # ==========================================================================
-    # Fake Odom Node (for testing without real odometry)
+    # Odometry Node
     # ==========================================================================
-    fake_odom_node = Node(
+    real_odom_node = Node(
         package='mapless_nav',
-        executable='fake_odom_node.py',
-        name='fake_odom_node',
+        executable='real_odom_node.py',
+        name='real_odom_node',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time}]
+        parameters=[{
+            'mode': odom_mode,
+            'use_sim_time': use_sim_time,
+        }]
     )
     
     # ==========================================================================
@@ -117,9 +128,10 @@ def generate_launch_description():
         declare_use_sim_time,
         declare_autostart,
         declare_use_rviz,
-        
+        declare_odom_mode,
+
         # Core TF and Odom
-        fake_odom_node,
+        real_odom_node,
         tf_base_to_lidar,
         
         # Nav2 (delayed)

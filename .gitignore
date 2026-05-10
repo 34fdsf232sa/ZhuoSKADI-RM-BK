@@ -58,8 +58,17 @@ show_optimization.sh
 .DS_Store
 Thumbs.db
 
+# Environment (secrets)
+.env
+.env.*
+
 # Berxel SDK
 berxel-sdk-master/
+
+# Third-party cloned repos (managed separately)
+ros2_ws/src/FAST_LIO_ROS2/
+ros2_ws/src/install/
+ros2_ws/src/log/
 
 # Compiled files
 *.o
