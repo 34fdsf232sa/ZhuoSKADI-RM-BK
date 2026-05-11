@@ -37,6 +37,7 @@ runs/
 *.plan
 *.blob
 *.xml
+!ros2_ws/src/mapless_nav_v2/behavior_trees/*.xml
 *.bin
 
 # Backups & local artifacts
@@ -46,6 +47,7 @@ runs/
 *.lock
 *.out
 *.csv
+!ros2_ws/src/mapless_nav_v2/wps/*.csv
 *.npy
 *.npz
 *.pkl
