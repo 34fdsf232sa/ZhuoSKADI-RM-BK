@@ -1,0 +1,41 @@
+<!--
+  COD-style Behavior Tree: Single-goal navigation with replanning and recovery.
+  Adapted from cod_bringup for mapless navigation.
+
+  Pattern:
+    RecoveryNode (top-level, 10 retries)
+      PipelineSequence: Plan -> Follow
+        RateController (3Hz): ComputePathToPose + Recovery: ClearGlobalCostmap
+        RecoveryNode (10 retries): FollowPath + Recovery: ClearLocalCostmap
+      ReactiveFallback: GoalUpdated + RoundRobin (Spin, BackUp, Wait)
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="10" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="3.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap" service_name="/global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="10" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap name="ClearLocalCostmap" service_name="/local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearCostmaps">
+            <ClearEntireCostmap name="ClearLocalRecovery" service_name="/local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalRecovery" service_name="/global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <Spin spin_dist="1.57"/>
+          <BackUp backup_dist="0.5" backup_speed="0.2"/>
+          <Wait wait_duration="2"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

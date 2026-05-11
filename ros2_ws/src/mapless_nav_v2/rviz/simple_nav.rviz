@@ -1,0 +1,46 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/TF
+      Name: TF
+    - Class: rviz_default_plugins/Map
+      Name: Local Costmap
+      Topic: /local_costmap/costmap_raw
+      Color Scheme: costmap
+    - Class: rviz_default_plugins/Map
+      Name: Global Costmap
+      Topic: /global_costmap/costmap_raw
+      Color Scheme: costmap
+    - Class: rviz_default_plugins/Path
+      Name: Global Plan
+      Topic: /plan
+      Color: 0; 255; 0
+    - Class: rviz_default_plugins/Path
+      Name: Local Plan
+      Topic: /local_plan
+      Color: 255; 255; 0
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Topic: /scan
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Fused PointCloud
+      Topic: /fused_pointcloud
+    - Class: rviz_default_plugins/Marker
+      Name: Home Pose
+      Topic: /home_pose
+    - Class: rviz_default_plugins/Odometry
+      Name: Odometry
+      Topic: /odom
+  Global Options:
+    Fixed Frame: odom
+    Frame Rate: 30
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 10
+      Focal Point: [0, 0, 0]

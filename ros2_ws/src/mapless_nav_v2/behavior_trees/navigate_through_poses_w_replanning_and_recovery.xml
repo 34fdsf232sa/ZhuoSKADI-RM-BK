@@ -1,0 +1,44 @@
+<!--
+  COD-style Behavior Tree: Multi-waypoint navigation with replanning and recovery.
+  Adapted from cod_bringup for mapless navigation.
+
+  Pattern:
+    RecoveryNode (top-level, 6 retries)
+      PipelineSequence: Plan -> Follow
+        RateController (3Hz): ComputePathThroughPoses + Recovery: ClearGlobalCostmap
+        RecoveryNode (6 retries): FollowPath + Recovery: ClearLocalCostmap
+      ReactiveFallback: GoalUpdated + RoundRobin (ClearCostmaps, Spin, BackUp, Wait)
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="3.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
+            <Sequence>
+              <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
+              <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.5"/>
+            </Sequence>
+            <ClearEntireCostmap name="ClearGlobalCostmap" service_name="/global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="6" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap name="ClearLocalCostmap" service_name="/local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearCostmaps">
+            <ClearEntireCostmap name="ClearLocalRecovery" service_name="/local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalRecovery" service_name="/global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <Spin spin_dist="1.57"/>
+          <BackUp backup_dist="1.0" backup_speed="0.3"/>
+          <Wait wait_duration="2"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>
