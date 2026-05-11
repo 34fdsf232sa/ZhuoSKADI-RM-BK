@@ -3,7 +3,7 @@
 Waypoint Patrol Node
 
 Navigates the robot through a sequence of waypoints using Nav2's
-NavigateThroughPoses action. Waypoints are loaded from a YAML config file
+FollowWaypoints action. Waypoints are loaded from a YAML config file
 and can be set to loop indefinitely.
 
 Triggers:
@@ -32,7 +32,7 @@ from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 from builtin_interfaces.msg import Duration
 
-from nav2_msgs.action import NavigateThroughPoses
+from nav2_msgs.action import FollowWaypoints
 
 import math
 from enum import Enum
@@ -56,7 +56,7 @@ class WaypointPatrolNode(Node):
         self.declare_parameter('waypoints_y', [0.0, 1.0, 1.0, 0.0])
         self.declare_parameter('waypoints_yaw', [0.0, 1.57, 3.14, 0.0])
         self.declare_parameter('loop', True)
-        self.declare_parameter('nav2_action_topic', 'navigate_through_poses')
+        self.declare_parameter('nav2_action_topic', 'follow_waypoints')
         self.declare_parameter('frame_id', 'odom')
         self.declare_parameter('nav2_timeout', 300.0)
 
@@ -85,7 +85,7 @@ class WaypointPatrolNode(Node):
         self.marker_pub = self.create_publisher(MarkerArray, '/patrol/waypoint_markers', 10)
 
         # Nav2 action client
-        self.nav2_client = ActionClient(self, NavigateThroughPoses, self.nav2_action_topic)
+        self.nav2_client = ActionClient(self, FollowWaypoints, self.nav2_action_topic)
 
         # State
         self.state = PatrolState.IDLE
@@ -150,7 +150,7 @@ class WaypointPatrolNode(Node):
 
     def _start_patrol(self):
         if not self.nav2_client.wait_for_server(timeout_sec=5.0):
-            self.get_logger().error('Nav2 NavigateThroughPoses action server not available')
+            self.get_logger().error('Nav2 FollowWaypoints action server not available')
             self.state = PatrolState.FAILED
             return
 
@@ -160,7 +160,7 @@ class WaypointPatrolNode(Node):
         self._send_waypoints_from(0)
 
     def _send_waypoints_from(self, start_idx):
-        goal = NavigateThroughPoses.Goal()
+        goal = FollowWaypoints.Goal()
         remaining = self.waypoints[start_idx:]
         goal.poses = remaining
 
@@ -173,7 +173,7 @@ class WaypointPatrolNode(Node):
     def _goal_response_cb(self, future):
         self.goal_handle = future.result()
         if not self.goal_handle.accepted:
-            self.get_logger().error('Nav2 NavigateThroughPoses goal rejected')
+            self.get_logger().error('Nav2 FollowWaypoints goal rejected')
             self.state = PatrolState.FAILED
             return
 
@@ -185,12 +185,16 @@ class WaypointPatrolNode(Node):
         if self.state != PatrolState.PATROLLING:
             return
 
-        result = future.result().result
         status = future.result().status
+        missed = future.result().result.missed_waypoints
 
-        from nav2_msgs.action import NavigateThroughPoses as NTP
-        if status == NTP.Result.SUCCESS:
-            self.get_logger().info('Completed all waypoints!')
+        # status 4 = SUCCEEDED (rclpy GoalStatus.STATUS_SUCCEEDED)
+        if status == 4:
+            if len(missed) > 0:
+                self.get_logger().warn(
+                    f'Patrol completed but {len(missed)} waypoints were missed: {missed}')
+            else:
+                self.get_logger().info('Completed all waypoints!')
             if self.loop:
                 self.get_logger().info('Looping: restarting patrol from first waypoint')
                 self.current_wp_idx = 0

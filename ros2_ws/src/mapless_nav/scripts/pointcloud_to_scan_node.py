@@ -48,7 +48,7 @@ class PointCloudToScanNode(Node):
         self.range_max = self.get_parameter('range_max').value
         publish_rate = self.get_parameter('publish_rate').value
 
-        self.num_bins = int(2.0 * math.pi / self.angle_increment)
+        self.num_bins = round(2.0 * math.pi / self.angle_increment)
         self.angle_min = -math.pi
         self.angle_max = math.pi
 

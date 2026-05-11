@@ -17,7 +17,7 @@ waypoint_patrol_node:
     frame_id: "odom"
 
     # Nav2 action topic
-    nav2_action_topic: "navigate_through_poses"
+    nav2_action_topic: "follow_waypoints"
 
     # Patrol timeout (seconds)
     nav2_timeout: 300.0
