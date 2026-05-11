@@ -1,0 +1,23 @@
+# =============================================================================
+# Waypoint Patrol Configuration
+# =============================================================================
+
+waypoint_patrol_node:
+  ros__parameters:
+    # Waypoints: parallel arrays of x, y (meters), yaw (radians, 0=forward)
+    # Each waypoint[i] = (waypoints_x[i], waypoints_y[i], waypoints_yaw[i])
+    waypoints_x: [1.0, 1.0, 0.0, 0.0]
+    waypoints_y: [0.0, 1.0, 1.0, 0.0]
+    waypoints_yaw: [0.0, 1.57, 3.14, 0.0]
+
+    # Loop: restart from first waypoint after completing all
+    loop: true
+
+    # Frame for waypoint coordinates
+    frame_id: "odom"
+
+    # Nav2 action topic
+    nav2_action_topic: "navigate_through_poses"
+
+    # Patrol timeout (seconds)
+    nav2_timeout: 300.0
