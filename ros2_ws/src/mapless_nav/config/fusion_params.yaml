@@ -40,6 +40,15 @@ pointcloud_fusion_node:
     min_height: -0.5  # meters relative to base_link
     max_height: 2.5  # meters
     
+    # Self-filter (remove robot body points in base_link frame)
+    enable_self_filter: true
+    self_filter_min_x: -0.25
+    self_filter_max_x: 0.25
+    self_filter_min_y: -0.20
+    self_filter_max_y: 0.20
+    self_filter_min_z: -0.30
+    self_filter_max_z: 0.60
+
     # Ground removal
     enable_ground_removal: false
     ground_threshold: 0.2  # RANSAC threshold

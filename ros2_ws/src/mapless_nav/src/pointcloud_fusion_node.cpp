@@ -32,6 +32,7 @@
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/filters/passthrough.h>
+#include <pcl/filters/crop_box.h>
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/filters/extract_indices.h>
 
@@ -129,6 +130,15 @@ private:
         this->declare_parameter("enable_height_filter", true);
         this->declare_parameter("min_height", -0.5);  // meters relative to base_link
         this->declare_parameter("max_height", 2.5);  // meters
+
+        // Self-filter (remove robot body points)
+        this->declare_parameter("enable_self_filter", true);
+        this->declare_parameter("self_filter_min_x", -0.25);
+        this->declare_parameter("self_filter_max_x", 0.25);
+        this->declare_parameter("self_filter_min_y", -0.20);
+        this->declare_parameter("self_filter_max_y", 0.20);
+        this->declare_parameter("self_filter_min_z", -0.30);
+        this->declare_parameter("self_filter_max_z", 0.60);
     }
     
     void get_parameters()
@@ -166,6 +176,14 @@ private:
         enable_height_filter_ = this->get_parameter("enable_height_filter").as_bool();
         min_height_ = this->get_parameter("min_height").as_double();
         max_height_ = this->get_parameter("max_height").as_double();
+
+        enable_self_filter_ = this->get_parameter("enable_self_filter").as_bool();
+        self_filter_min_x_ = this->get_parameter("self_filter_min_x").as_double();
+        self_filter_max_x_ = this->get_parameter("self_filter_max_x").as_double();
+        self_filter_min_y_ = this->get_parameter("self_filter_min_y").as_double();
+        self_filter_max_y_ = this->get_parameter("self_filter_max_y").as_double();
+        self_filter_min_z_ = this->get_parameter("self_filter_min_z").as_double();
+        self_filter_max_z_ = this->get_parameter("self_filter_max_z").as_double();
     }
     
     void init_synchronized_subscribers()
@@ -343,7 +361,26 @@ private:
     PointCloudT::Ptr apply_filters(PointCloudT::Ptr cloud)
     {
         if (cloud->empty()) return cloud;
-        
+
+        // Self-filter: remove points within robot footprint
+        if (enable_self_filter_) {
+            pcl::CropBox<PointT> crop;
+            crop.setInputCloud(cloud);
+            crop.setMin(Eigen::Vector4f(
+                self_filter_min_x_, self_filter_min_y_,
+                self_filter_min_z_, 1.0));
+            crop.setMax(Eigen::Vector4f(
+                self_filter_max_x_, self_filter_max_y_,
+                self_filter_max_z_, 1.0));
+            crop.setNegative(true);
+            crop.setKeepOrganized(false);
+            PointCloudT::Ptr filtered(new PointCloudT);
+            crop.filter(*filtered);
+            cloud = filtered;
+        }
+
+        if (cloud->empty()) return cloud;
+
         // Range filter (distance from origin)
         if (enable_range_filter_) {
             PointCloudT::Ptr filtered(new PointCloudT);
@@ -504,6 +541,11 @@ private:
     bool enable_height_filter_;
     double min_height_;
     double max_height_;
+
+    bool enable_self_filter_;
+    double self_filter_min_x_, self_filter_max_x_;
+    double self_filter_min_y_, self_filter_max_y_;
+    double self_filter_min_z_, self_filter_max_z_;
 };
 
 int main(int argc, char** argv)

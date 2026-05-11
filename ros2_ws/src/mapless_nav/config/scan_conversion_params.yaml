@@ -1,0 +1,14 @@
+# =============================================================================
+# PointCloud2 to LaserScan Conversion Configuration
+# =============================================================================
+
+pointcloud_to_scan_node:
+  ros__parameters:
+    input_topic: "/fused_pointcloud"
+    output_topic: "/scan"
+    min_height: 0.1
+    max_height: 1.8
+    angle_increment: 0.0174533    # pi / 180 = 1 degree
+    range_min: 0.05
+    range_max: 12.0
+    publish_rate: 20.0

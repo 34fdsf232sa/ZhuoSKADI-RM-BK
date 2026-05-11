@@ -1,0 +1,23 @@
+# =============================================================================
+# Return Home Node Configuration
+# =============================================================================
+
+return_home_node:
+  ros__parameters:
+    # Manual home pose (leave as default to auto-record from /odom)
+    home_pose_x: -999.0
+    home_pose_y: -999.0
+    home_pose_z: 0.0
+    home_pose_yaw: 0.0
+
+    # Topics
+    odom_topic: "/odom"
+    nav2_action_topic: "navigate_to_pose"
+    cmd_vel_topic: "/cmd_vel"
+
+    # Navigation timeout (seconds)
+    nav2_timeout: 120.0
+
+    # Battery auto-return (optional, leave empty to disable)
+    battery_topic: ""
+    battery_threshold: 0.0
