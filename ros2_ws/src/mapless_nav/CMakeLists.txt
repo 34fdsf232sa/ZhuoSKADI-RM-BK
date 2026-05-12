@@ -103,11 +103,6 @@ install(PROGRAMS
   scripts/target_tracker_node.py
   scripts/following_controller_node.py
   scripts/fake_odom_node.py
-  scripts/real_odom_node.py
-  scripts/pointcloud_to_scan_node.py
-  scripts/return_home_node.py
-  scripts/waypoint_patrol_node.py
-  scripts/setup_livox_sdk.sh
   DESTINATION lib/${PROJECT_NAME}
 )
 

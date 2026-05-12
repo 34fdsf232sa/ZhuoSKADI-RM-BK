@@ -13,7 +13,7 @@ This launches:
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -29,16 +29,11 @@ def generate_launch_description():
     use_nav2 = LaunchConfiguration('use_nav2')
     enable_following = LaunchConfiguration('enable_following')
     enable_visualization = LaunchConfiguration('enable_visualization')
-    enable_patrol = LaunchConfiguration('enable_patrol')
-    odom_mode = LaunchConfiguration('odom_mode')
-
+    
     # Config files
     nav2_params_file = os.path.join(pkg_share, 'config', 'nav2_mapless_params.yaml')
     fusion_params_file = os.path.join(pkg_share, 'config', 'fusion_params.yaml')
     tracker_params_file = os.path.join(pkg_share, 'config', 'tracker_params.yaml')
-    scan_conversion_params_file = os.path.join(pkg_share, 'config', 'scan_conversion_params.yaml')
-    return_home_params_file = os.path.join(pkg_share, 'config', 'return_home_params.yaml')
-    patrol_params_file = os.path.join(pkg_share, 'config', 'patrol_params.yaml')
     
     # Declare launch arguments
     declare_use_sim_time = DeclareLaunchArgument(
@@ -63,19 +58,6 @@ def generate_launch_description():
         'enable_visualization',
         default_value='true',
         description='Enable visualization outputs'
-    )
-
-    declare_enable_patrol = DeclareLaunchArgument(
-        'enable_patrol',
-        default_value='false',
-        description='Enable waypoint patrol node'
-    )
-
-    declare_odom_mode = DeclareLaunchArgument(
-        'odom_mode',
-        default_value='fake',
-        choices=['fake', 'l2_imu', 'external'],
-        description='Odometry mode: fake (testing), l2_imu (L2 IMU), external (FAST_LIO/slam_toolbox)'
     )
     
     # ==========================================================================
@@ -102,7 +84,6 @@ def generate_launch_description():
     
     # ==========================================================================
     # Target Tracker Node (YOLO + ByteTrack)
-    # GPU acceleration via ROCm: source scripts/setup_rocm_env.sh before launching
     # ==========================================================================
     target_tracker_node = Node(
         package='mapless_nav',
@@ -125,56 +106,16 @@ def generate_launch_description():
     )
     
     # ==========================================================================
-    # PointCloud2 to LaserScan Conversion Node
-    # ==========================================================================
-    pointcloud_to_scan_node = Node(
-        package='mapless_nav',
-        executable='pointcloud_to_scan_node.py',
-        name='pointcloud_to_scan_node',
-        output='screen',
-        parameters=[scan_conversion_params_file, {'use_sim_time': use_sim_time}]
-    )
-
-    # ==========================================================================
-    # Return Home Node
-    # ==========================================================================
-    return_home_node = Node(
-        package='mapless_nav',
-        executable='return_home_node.py',
-        name='return_home_node',
-        output='screen',
-        parameters=[return_home_params_file, {'use_sim_time': use_sim_time}]
-    )
-
-    # ==========================================================================
-    # Waypoint Patrol Node (optional)
-    # ==========================================================================
-    waypoint_patrol_node = Node(
-        package='mapless_nav',
-        executable='waypoint_patrol_node.py',
-        name='waypoint_patrol_node',
-        output='screen',
-        parameters=[patrol_params_file, {'use_sim_time': use_sim_time}],
-        condition=IfCondition(enable_patrol)
-    )
-
-    # ==========================================================================
-    # Odometry Node
-    # ==========================================================================
-    real_odom_node = Node(
-        package='mapless_nav',
-        executable='real_odom_node.py',
-        name='real_odom_node',
-        output='screen',
-        parameters=[{
-            'mode': odom_mode,
-            'use_sim_time': use_sim_time,
-        }]
-    )
-
-    # ==========================================================================
     # Static TF Publishers for sensor frames
     # ==========================================================================
+    # Fake Odom (for testing without real odometry)
+    fake_odom_node = Node(
+        package='mapless_nav',
+        executable='fake_odom_node.py',
+        name='fake_odom_node',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
+    )
     
     # Base to Mid-70 (forward, slightly elevated)
     tf_base_to_mid70 = Node(
@@ -249,34 +190,25 @@ def generate_launch_description():
         declare_use_nav2,
         declare_enable_following,
         declare_enable_visualization,
-        declare_enable_patrol,
-        declare_odom_mode,
-
-        # Odometry
-        real_odom_node,
-
+        
+        # Fake Odom (for testing)
+        fake_odom_node,
+        
         # TF
         tf_base_to_mid70,
         tf_base_to_l2,
         tf_base_to_berxel,
         tf_berxel_to_depth,
-
-        # Processing
+        
+        # Nodes
         depth_to_pointcloud_node,
         pointcloud_fusion_node,
-        pointcloud_to_scan_node,
-
-        # Perception + Control
         target_tracker_node,
         following_controller_node,
-
-        # Navigation services
-        return_home_node,
-        waypoint_patrol_node,
-
+        
         # Nav2 (optional)
         *nav2_actions,
-
+        
         # RViz (optional)
         rviz_node,
     ])

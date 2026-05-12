@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 """
-视觉目标追踪系统
-基于 YOLOv12 + Berxel P100R 深度相机
+人员检测 + SLAM导航集成系统
+结合YOLOv8人员检测与深度SLAM避障
 
 功能:
-- 实时人员检测与跟踪 (YOLOv12 ONNX)
-- 深度测量与距离标注
-- 目标位置输出 (供 Nav2 导航使用)
-- 单窗口可视化界面
-
-架构:
-- 本脚本: 视觉追踪 (P100R + YOLOv12) → 发布目标位置
-- Nav2: 接收目标位置 + LiDAR融合 (Mid70 + L2) → 导航控制
+- 实时人员检测与跟踪
+- 深度SLAM障碍物检测
+- 导航决策输出
+- 统一可视化界面
 
 作者: Zhuo RM Team
-日期: 2026-01-29
+日期: 2025-10-17
 """
 
 import cv2
@@ -22,10 +18,16 @@ import numpy as np
 import time
 import onnxruntime as ort
 import sys
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import PointCloud2
+import threading
+import struct
 
 from berxel_camera import BerxelCamera
+from depth_slam_obstacle import DepthSLAMObstacleDetector
 
-# ============== 环境信息 ==============
+# 在启动时打印环境信息
 def _print_runtime_env():
     try:
         import onnxruntime as ort
@@ -36,7 +38,7 @@ def _print_runtime_env():
 
 _print_runtime_env()
 
-# ============== ONNX Runtime 初始化 ==============
+# 加载 ONNX Runtime 会话
 print("Initializing ONNX Runtime...")
 available_providers = ort.get_available_providers()
 print(f"Available ONNX Runtime providers: {available_providers}")
@@ -53,34 +55,65 @@ else:
     print("ℹ️ Using CPUExecutionProvider (optimized for x86)")
 
 # 加载 ONNX 模型
-onnx_model_path = 'yolo12n.onnx'
+onnx_model_path = 'yolov8n.onnx'
 session = ort.InferenceSession(onnx_model_path, providers=providers)
 
+# 获取输入输出信息
 input_name = session.get_inputs()[0].name
 output_names = [o.name for o in session.get_outputs()]
 print(f"Model input: {input_name}, outputs: {output_names}")
 
-# ============== 参数配置 ==============
-# YOLO 参数
+# YOLO 推理参数配置
 YOLO_CONF_THRESHOLD = 0.40
 YOLO_IOU_THRESHOLD = 0.45
-YOLO_INPUT_SIZE = 416
+YOLO_MAX_DETECTIONS = 100
 
-# 性能参数
+# 性能优化参数
 SKIP_FRAMES = 1
-DISPLAY_SCALE = 0.6
+YOLO_INPUT_SIZE = 416
+DISPLAY_SCALE = 0.5
 TARGET_FPS = 30
+DEPTH_PROCESS_INTERVAL = 3
 
-# 深度参数
-DEPTH_WINDOW_SIZE = 7
-DEPTH_MIN_VALID = 3000      # 最小有效深度 (mm)
-DEPTH_MAX_VALID = 150000    # 最大有效深度 (mm)
-DEPTH_SCALE = 17000.0       # P100R 深度转换系数
+# 深度平滑参数
+DEPTH_EMA_ALPHA = 0.25
+DEPTH_VIS_KEEP_FRAMES = 5
 
+# SLAM参数
+SLAM_DEPTH_THRESHOLD_NEAR = 0.8  # 近距离障碍物阈值(米)
+SLAM_DEPTH_THRESHOLD_FAR = 5.0   # 远距离阈值(米)
 
-# ============== 辅助函数 ==============
+class LidarMonitor(Node):
+    def __init__(self):
+        super().__init__('lidar_monitor')
+        self.subscription = self.create_subscription(
+            PointCloud2,
+            '/unilidar/cloud',
+            self.lidar_callback,
+            10)
+        self.lidar_data = None
+        self.lock = threading.Lock()
+        self.point_count = 0
+        print("LiDAR Monitor initialized, waiting for data...")
+
+    def lidar_callback(self, msg):
+        with self.lock:
+            self.lidar_data = msg
+            self.point_count = msg.width * msg.height
+            # print(f"Received LiDAR data: {self.point_count} points")
+
+    def get_latest_cloud(self):
+        with self.lock:
+            return self.lidar_data, self.point_count
+
+def start_lidar_monitor():
+    rclpy.init()
+    lidar_monitor = LidarMonitor()
+    thread = threading.Thread(target=rclpy.spin, args=(lidar_monitor,), daemon=True)
+    thread.start()
+    return lidar_monitor
+
 def initialize_camera():
-    """初始化 Berxel 相机"""
     try:
         camera = BerxelCamera()
         if not camera.initialize():
@@ -100,71 +133,61 @@ def is_valid_person(box, confidence, frame_height, frame_width):
     if width <= 0 or height <= 0:
         return False
     
-    # 宽高比检查 (人形通常是纵向的)
     aspect_ratio = height / width
+    
     if aspect_ratio < 0.3 or aspect_ratio > 8.0:
         return False
     
-    # 面积比例检查
     area = width * height
     frame_area = frame_height * frame_width
     area_ratio = area / frame_area
+    
     if area_ratio < 0.002 or area_ratio > 0.98:
         return False
     
-    # 最小尺寸检查
     if width < 40 or height < 60:
         return False
     
-    # 最大尺寸检查
     if width > 1900 or height > 1100:
         return False
-    
-    # 置信度二次过滤
+        
     if confidence < 0.45:
         return False
     
     return True
 
 
-def run_yolo_inference(frame, session, input_name, input_size=416):
-    """使用 ONNX Runtime 运行 YOLOv12 推理"""
-    # 预处理
+def run_onnx_inference(frame, session, input_name, input_size=416):
+    """使用 ONNX Runtime 运行 YOLOv8 推理"""
     img = cv2.resize(frame, (input_size, input_size))
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = img.transpose(2, 0, 1).astype(np.float32) / 255.0
     img = np.expand_dims(img, axis=0)
     
-    # 推理
     outputs = session.run(None, {input_name: img})
     predictions = outputs[0][0].T
     
-    # 解析输出
     boxes = predictions[:, :4]
     scores = predictions[:, 4:]
     
     class_ids = np.argmax(scores, axis=1)
     confidences = np.max(scores, axis=1)
     
-    # 过滤低置信度
     mask = confidences > YOLO_CONF_THRESHOLD
     boxes = boxes[mask]
     confidences = confidences[mask]
     class_ids = class_ids[mask]
     
-    # 只保留人员类别 (class_id == 0)
     person_mask = class_ids == 0
     boxes = boxes[person_mask]
     confidences = confidences[person_mask]
     
-    # 转换坐标格式
     x_center, y_center, width, height = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
     x1 = x_center - width / 2
     y1 = y_center - height / 2
     x2 = x_center + width / 2
     y2 = y_center + height / 2
     
-    # NMS
     if len(boxes) > 0:
         indices = cv2.dnn.NMSBoxes(
             boxes.tolist(),
@@ -178,7 +201,6 @@ def run_yolo_inference(frame, session, input_name, input_size=416):
                 indices = list(indices)
             if isinstance(indices, list) and len(indices) > 0:
                 indices = np.array(indices).flatten()
-            
             x1 = x1[indices]
             y1 = y1[indices]
             x2 = x2[indices]
@@ -191,8 +213,8 @@ def run_yolo_inference(frame, session, input_name, input_size=416):
     return np.array([])
 
 
-def get_depth_at_point(depth_map, x, y, window_size=DEPTH_WINDOW_SIZE):
-    """获取指定点的深度值 (中值滤波)"""
+def get_depth_at_point(depth_map, x, y, window_size=5):
+    """获取指定点的深度值"""
     if depth_map is None:
         return None
     
@@ -212,79 +234,154 @@ def get_depth_at_point(depth_map, x, y, window_size=DEPTH_WINDOW_SIZE):
     
     depth_value = np.median(valid_depths)
     
-    if depth_value < DEPTH_MIN_VALID or depth_value > DEPTH_MAX_VALID:
+    if depth_value < 3000 or depth_value > 150000:
         return None
     
     return float(depth_value)
 
 
-def select_primary_target(detections, frame_width):
-    """选择主要追踪目标 (最大面积 + 最近中心)"""
-    if len(detections) == 0:
-        return None
+def pointcloud2_to_birdview(cloud_msg, width=400, height=400, resolution=0.02, debug_counter=[0]):
+    """将 PointCloud2 转换为鸟瞰图"""
+    if cloud_msg is None:
+        birdview = np.zeros((height, width, 3), dtype=np.uint8)
+        cv2.putText(birdview, "No LiDAR Data", (10, height//2),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        return birdview
     
-    best_score = -1
-    best_idx = 0
-    frame_center_x = frame_width / 2
+    # 创建鸟瞰图画布
+    birdview = np.zeros((height, width, 3), dtype=np.uint8)
     
-    for i, det in enumerate(detections):
-        x1, y1, x2, y2, conf = det
+    try:
+        # 解析 PointCloud2 数据
+        point_step = cloud_msg.point_step
+        data = cloud_msg.data
         
-        # 计算面积得分
-        area = (x2 - x1) * (y2 - y1)
+        debug_counter[0] += 1
         
-        # 计算中心偏移得分 (越靠近中心越好)
-        center_x = (x1 + x2) / 2
-        center_offset = abs(center_x - frame_center_x) / frame_center_x
-        center_score = 1 - center_offset
+        # 根据 point_step 自动识别格式
+        points = []
+        total_points = len(data) // point_step
         
-        # 综合得分 = 面积 * 中心得分 * 置信度
-        score = area * center_score * conf
+        for i in range(0, min(len(data), total_points * point_step), point_step):
+            if i + 12 <= len(data):  # 至少需要 x,y,z
+                try:
+                    x = struct.unpack('f', bytes(data[i:i+4]))[0]
+                    y = struct.unpack('f', bytes(data[i+4:i+8]))[0]
+                    z = struct.unpack('f', bytes(data[i+8:i+12]))[0]
+                    
+                    # 过滤无效点和超出范围的点
+                    if not (np.isnan(x) or np.isnan(y) or np.isnan(z) or np.isinf(x) or np.isinf(y) or np.isinf(z)):
+                        if abs(x) < 20 and abs(y) < 20 and z > -5 and z < 5:  # 扩大范围
+                            points.append((x, y, z))
+                except:
+                    continue
         
-        if score > best_score:
-            best_score = score
-            best_idx = i
+        # 每 30 帧打印一次调试信息
+        if debug_counter[0] % 30 == 0:
+            print(f"LiDAR Debug: Total {total_points} points, Valid {len(points)} points, Step {point_step}")
+        
+        # 绘制点云到鸟瞰图
+        for x, y, z in points:
+            # 转换到图像坐标 (中心在图像下方，前方向上)
+            img_x = int(width / 2 + y / resolution)  # y对应图像x
+            img_y = int(height - x / resolution - 20)  # x对应图像y (前方向上)
+            
+            if 0 <= img_x < width and 0 <= img_y < height:
+                # 根据高度着色
+                if z < -0.2:
+                    color = (0, 0, 255)  # 低于地面 - 红色
+                elif z > 0.5:
+                    color = (255, 255, 0)  # 高于半米 - 黄色
+                else:
+                    color = (0, 255, 0)  # 正常 - 绿色
+                cv2.circle(birdview, (img_x, img_y), 2, color, -1)
+        
+        # 绘制机器人位置（图像下方中心）
+        robot_x, robot_y = width//2, height - 10
+        cv2.circle(birdview, (robot_x, robot_y), 5, (255, 0, 255), -1)
+        cv2.circle(birdview, (robot_x, robot_y), 10, (255, 0, 255), 1)
+        
+        # 绘制方向指示线
+        cv2.arrowedLine(birdview, (robot_x, robot_y), (robot_x, robot_y-30), (255, 0, 255), 2)
+        
+        # 添加文本信息
+        cv2.putText(birdview, f"Points: {len(points)}", (10, 20),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(birdview, "LiDAR BirdView", (10, height-10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        cv2.putText(birdview, f"{resolution*width:.1f}m x {resolution*height:.1f}m", (width-150, height-10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+    except Exception as e:
+        if debug_counter[0] % 30 == 1:
+            print(f"点云转换错误: {e}")
+            import traceback
+            traceback.print_exc()
+        cv2.putText(birdview, "PointCloud Error", (10, height//2),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
     
-    return detections[best_idx]
+    return birdview
 
 
-# ============== 主函数 ==============
 def main():
-    """主函数：视觉目标追踪"""
+    """主函数：集成人员检测与SLAM导航"""
     cap = None
     try:
-        print("\n" + "="*60)
-        print("🎯 视觉目标追踪系统 (YOLOv12 + P100R)")
-        print("   目标位置将发送给 Nav2 进行追踪导航")
-        print("="*60)
+        print("\n" + "="*70)
+        print("🤖 人员检测 + SLAM导航集成系统")
+        print("="*70)
         
         # 初始化相机
-        print("\n初始化 Berxel 相机...")
+        print("\n[1/3] 初始化Berxel相机...")
         cap = initialize_camera()
         print("✅ 相机初始化成功")
+
+        # 初始化LiDAR监听
+        print("\n[1.5/3] 初始化LiDAR监听...")
+        lidar_monitor = None
+        try:
+            lidar_monitor = start_lidar_monitor()
+            print("✅ LiDAR监听已启动")
+        except Exception as e:
+            print(f"⚠️ LiDAR监听启动失败: {e}")
         
-        print("\n系统就绪！")
+        # 初始化SLAM检测器
+        print("\n[2/3] 初始化SLAM避障系统...")
+        slam = DepthSLAMObstacleDetector(
+            depth_threshold_near=SLAM_DEPTH_THRESHOLD_NEAR,
+            depth_threshold_far=SLAM_DEPTH_THRESHOLD_FAR,
+            min_navigable_area=800
+        )
+        print("✅ SLAM系统初始化成功")
+        
+        print("\n[3/3] 系统就绪！")
         print("\n控制键:")
         print("  - 'q': 退出程序")
         print("  - 's': 保存截图")
         print("  - 'p': 暂停/继续")
-        print("="*60 + "\n")
+        print("  - 'd': 切换SLAM显示")
+        print("="*70 + "\n")
         
-        # 状态变量
+        # 性能统计变量
         frame_count = 0
         last_detections = []
         fps_start_time = time.time()
         fps_frame_count = 0
         current_fps = 0
+        
+        # SLAM控制变量
+        show_slam = True
         paused = False
         screenshot_count = 0
         
-        # 追踪目标
-        primary_target = None
-        target_distance = None
+        # 深度平滑缓存
+        last_depth_color = None
+        last_depth_raw = None
+        ema_depth_min = None
+        ema_depth_max = None
+        last_depth_keep_counter = 0
         
         while True:
-            # 暂停处理
             if paused:
                 key = cv2.waitKey(100) & 0xFF
                 if key == ord('p'):
@@ -296,7 +393,7 @@ def main():
             
             loop_start = time.time()
             
-            # 获取图像
+            # 获取彩色图像和深度图
             frame = cap.get_frame()
             depth = cap.get_depth()
             
@@ -305,20 +402,97 @@ def main():
                 continue
             
             h, w = frame.shape[:2]
-            display = frame.copy()
+            
+            # 创建显示画布（左：检测 | 中：深度/SLAM | 右：点云）
+            display = np.zeros((h, w*3, 3), dtype=np.uint8)
+            display[:, :w] = frame.copy()
             
             frame_count += 1
             fps_frame_count += 1
             
-            # 缩放深度图
+            # ========== 深度图处理与SLAM ==========
             depth_resized = None
-            if depth is not None and depth.size > 0:
-                depth_resized = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
+            slam_info = None
+            obstacle_mask = None
             
-            # ========== YOLO 检测 ==========
+            if depth is not None and depth.size > 0 and frame_count % DEPTH_PROCESS_INTERVAL == 0:
+                try:
+                    # 缩放深度图到彩色图尺寸
+                    depth_resized = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
+                    
+                    # 转换为米（P100R需要除以17）
+                    depth_meters = depth_resized / 17000.0
+                    
+                    # SLAM处理
+                    if show_slam:
+                        obstacle_mask, slam_info = slam.process_depth_frame(depth_meters, frame)
+                    
+                    # 深度可视化（带平滑）
+                    valid_depth = depth_resized[depth_resized > 0]
+                    
+                    if len(valid_depth) > 0:
+                        depth_min = np.percentile(valid_depth, 1)
+                        depth_max = np.percentile(valid_depth, 99)
+                        
+                        # EMA 平滑
+                        if ema_depth_min is None:
+                            ema_depth_min = float(depth_min)
+                        else:
+                            ema_depth_min = (DEPTH_EMA_ALPHA * float(depth_min) + 
+                                           (1 - DEPTH_EMA_ALPHA) * ema_depth_min)
+                        
+                        if ema_depth_max is None:
+                            ema_depth_max = float(depth_max)
+                        else:
+                            ema_depth_max = (DEPTH_EMA_ALPHA * float(depth_max) + 
+                                           (1 - DEPTH_EMA_ALPHA) * ema_depth_max)
+                        
+                        if ema_depth_max > ema_depth_min:
+                            depth_norm = np.clip((depth_resized - ema_depth_min) / 
+                                               (ema_depth_max - ema_depth_min), 0, 1)
+                            depth_norm = (depth_norm * 255).astype(np.uint8)
+                            depth_color = cv2.applyColorMap(depth_norm, cv2.COLORMAP_JET)
+                            mask = depth_resized == 0
+                            depth_color[mask] = [0, 0, 0]
+                            
+                            # SLAM可视化叠加
+                            if show_slam and obstacle_mask is not None:
+                                depth_color = slam.visualize(depth_meters, obstacle_mask, 
+                                                            slam_info, depth_color)
+                            
+                            display[:, w:w*2] = depth_color
+                            last_depth_color = depth_color.copy()
+                            last_depth_raw = depth_resized.copy()
+                            last_depth_keep_counter = 0
+                    else:
+                        display[:, w:w*2] = 0
+                        
+                except Exception as e:
+                    print(f"深度/SLAM处理错误: {e}")
+                    display[:, w:] = 0
+            else:
+                # 重用上一帧深度可视化
+                if last_depth_color is not None and last_depth_keep_counter < DEPTH_VIS_KEEP_FRAMES:
+                    display[:, w:w*2] = last_depth_color
+                    last_depth_keep_counter += 1
+                    depth_resized = last_depth_raw
+                else:
+                    display[:, w:w*2] = 0
+            
+            # ========== LiDAR 点云显示 ==========
+            if lidar_monitor is not None:
+                cloud_msg, point_count = lidar_monitor.get_latest_cloud()
+                lidar_birdview = pointcloud2_to_birdview(cloud_msg, width=w, height=h)
+                display[:, w*2:w*3] = lidar_birdview
+            else:
+                display[:, w*2:w*3] = 0
+                cv2.putText(display, "No LiDAR", (w*2+10, h//2),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+            
+            # ========== YOLO人员检测 ==========
             try:
                 if frame_count % (SKIP_FRAMES + 1) == 0:
-                    detections = run_yolo_inference(frame, session, input_name, YOLO_INPUT_SIZE)
+                    detections = run_onnx_inference(frame, session, input_name, YOLO_INPUT_SIZE)
                     
                     scale_x = w / YOLO_INPUT_SIZE
                     scale_y = h / YOLO_INPUT_SIZE
@@ -333,96 +507,77 @@ def main():
                         
                         if is_valid_person((x1, y1, x2, y2), confidence, h, w):
                             last_detections.append((x1, y1, x2, y2, confidence))
-                    
-                    # 选择主要追踪目标
-                    if last_detections:
-                        primary_target = select_primary_target(
-                            np.array(last_detections), w
-                        )
-                    else:
-                        primary_target = None
-                        target_distance = None
                 
                 # 绘制检测结果
-                for i, detection in enumerate(last_detections):
+                for detection in last_detections:
                     x1, y1, x2, y2, confidence = detection
-                    center_x = int((x1 + x2) / 2)
-                    center_y = int((y1 + y2) / 2)
-                    
-                    # 获取深度
-                    depth_value = get_depth_at_point(depth_resized, center_x, center_y)
-                    distance_m = depth_value / DEPTH_SCALE if depth_value else None
-                    
-                    # 判断是否为主目标
-                    is_primary = (primary_target is not None and 
-                                  np.allclose([x1, y1, x2, y2, confidence], primary_target, atol=1))
-                    
-                    if is_primary:
-                        target_distance = distance_m
-                        color = (0, 0, 255)  # 红色 - 主目标
-                        thickness = 3
-                        label = f"TARGET {confidence:.2f}"
-                    else:
-                        color = (0, 255, 0)  # 绿色 - 其他人员
-                        thickness = 2
+                    try:
+                        center_x = int((x1 + x2) / 2)
+                        center_y = int((y1 + y2) / 2)
+                        
+                        # 获取深度值
+                        depth_source = depth_resized if depth_resized is not None else last_depth_raw
+                        depth_value = get_depth_at_point(depth_source, center_x, center_y, window_size=7)
+                        
                         label = f"Person {confidence:.2f}"
-                    
-                    if distance_m is not None:
-                        label += f" {distance_m:.2f}m"
-                    
-                    # 绘制
-                    cv2.rectangle(display, (x1, y1), (x2, y2), color, thickness)
-                    cv2.putText(display, label, (x1, y1 - 10),
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                    cv2.drawMarker(display, (center_x, center_y),
-                                 color, cv2.MARKER_CROSS, 15 if is_primary else 10, 2)
+                        if depth_value is not None:
+                            distance_m = depth_value / 17000.0
+                            label += f" {distance_m:.2f}m"
+                        else:
+                            label += " (no depth)"
+                        
+                        # 在左侧绘制
+                        cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(display, label, (x1, y1 - 10),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        cv2.drawMarker(display, (center_x, center_y),
+                                     (0, 0, 255), cv2.MARKER_CROSS, 10, 2)
+                        
+                        # 在中间列也绘制
+                        cv2.rectangle(display, (w+x1, y1), (w+x2, y2), (0, 255, 0), 2)
+                        cv2.drawMarker(display, (w+center_x, center_y),
+                                     (0, 0, 255), cv2.MARKER_CROSS, 10, 2)
+                    except Exception as e:
+                        print(f"处理检测框时发生错误: {e}")
+                        continue
                 
-                # 计算 FPS
+                # 计算FPS
                 if fps_frame_count >= 30:
                     elapsed = time.time() - fps_start_time
                     current_fps = fps_frame_count / elapsed
                     fps_start_time = time.time()
                     fps_frame_count = 0
                 
-                # ========== 显示信息 ==========
-                # FPS
-                cv2.putText(display, f"FPS: {current_fps:.1f}", (10, 30),
+                # 显示系统信息
+                info_y = 30
+                cv2.putText(display, f"FPS: {current_fps:.1f}", (10, info_y),
                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
                 
-                # 检测数量
-                cv2.putText(display, f"People: {len(last_detections)}", (10, 60),
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                if show_slam and slam_info:
+                    info_y += 35
+                    direction = slam_info['suggested_direction']
+                    cv2.putText(display, f"Nav: {direction.upper()}", (10, info_y),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    info_y += 30
+                    cv2.putText(display, f"People: {len(last_detections)}", (10, info_y),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 
-                # 目标信息
-                if primary_target is not None:
-                    target_info = "TARGET: "
-                    if target_distance is not None:
-                        target_info += f"{target_distance:.2f}m"
-                    else:
-                        target_info += "detecting..."
-                    cv2.putText(display, target_info, (10, 90),
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-                    
-                    # 目标位置 (归一化坐标，供Nav2使用)
-                    tx1, ty1, tx2, ty2, _ = primary_target
-                    target_center_x = (tx1 + tx2) / 2 / w  # 0-1
-                    target_center_y = (ty1 + ty2) / 2 / h  # 0-1
-                    cv2.putText(display, f"Pos: ({target_center_x:.2f}, {target_center_y:.2f})", 
-                              (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-                else:
-                    cv2.putText(display, "No target", (10, 90),
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
-                
-                # 底部标题
-                cv2.putText(display, "Visual Tracker - YOLOv12", (w//2-120, h-20),
+                # 显示提示
+                cv2.putText(display, "Detection", (w//2-80, h-20),
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                cv2.putText(display, "SLAM Navigation" if show_slam else "Depth Only", 
+                          (w + w//2-100, h-20),
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                cv2.putText(display, "LiDAR PointCloud", 
+                          (w*2 + w//2-100, h-20),
                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
                 
                 # 缩放显示
                 display_h = int(h * DISPLAY_SCALE)
-                display_w = int(w * DISPLAY_SCALE)
+                display_w = int(w * 3 * DISPLAY_SCALE)
                 display_resized = cv2.resize(display, (display_w, display_h))
                 
-                cv2.imshow('Visual Tracker', display_resized)
+                cv2.imshow('Person Detection + SLAM Navigation', display_resized)
                 
                 # 键盘控制
                 key = cv2.waitKey(1) & 0xFF
@@ -430,12 +585,16 @@ def main():
                     break
                 elif key == ord('s'):
                     screenshot_count += 1
-                    filename = f'tracker_screenshot_{screenshot_count}.png'
+                    filename = f'screenshot_{screenshot_count}.png'
                     cv2.imwrite(filename, display)
                     print(f"\n📸 截图保存: {filename}")
                 elif key == ord('p'):
                     paused = True
                     print("\n⏸️  已暂停（按'p'继续）")
+                elif key == ord('d'):
+                    show_slam = not show_slam
+                    status = "开启" if show_slam else "关闭"
+                    print(f"\n🗺️  SLAM显示: {status}")
                 
                 # 帧率控制
                 elapsed = time.time() - loop_start
@@ -453,19 +612,26 @@ def main():
         traceback.print_exc()
         
     finally:
-        print("\n" + "="*60)
+        # 清理资源
+        print("\n" + "="*70)
         print("🧹 清理资源...")
         
         cv2.destroyAllWindows()
         if cap:
             cap.release()
         
-        print(f"\n📊 运行统计:")
-        print(f"  - 总帧数: {frame_count}")
-        print(f"  - 平均FPS: {current_fps:.1f}")
+        # 显示统计信息
+        if 'slam' in locals():
+            stats = slam.get_statistics()
+            print(f"\n📊 运行统计:")
+            print(f"  - 总帧数: {frame_count}")
+            print(f"  - SLAM处理帧数: {stats['total_frames']}")
+            print(f"  - 平均FPS: {current_fps:.1f}")
+            if stats['total_frames'] > 0:
+                print(f"  - SLAM平均处理时间: {stats['avg_processing_time']*1000:.1f}ms")
         
         print("\n✅ 系统已关闭")
-        print("="*60)
+        print("="*70)
 
 
 if __name__ == "__main__":

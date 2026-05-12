@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src/lidar_follow"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short --ignore=test_berxel_camera.py --ignore=test_lidar_params.py --ignore=test_udp.py --ignore=test_camera.py --ignore=test_depth.py --ignore=test_yolo.py --ignore=test_slam_module.py --ignore=test_onnx_performance.py --ignore=person_detect_slam.py --ignore=debug_pointcloud.py --ignore=mid70_vis.py --ignore=berxel_person_detect.py --ignore=person_detect.py"
+norecursedirs = ["ros2_ws", ".venv", "yolov8_env", "RosSDKNode", "libs", "Include", "build", "install", "log"]
+filterwarnings = ["ignore::DeprecationWarning"]
