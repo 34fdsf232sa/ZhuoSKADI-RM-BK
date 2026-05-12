@@ -12,9 +12,9 @@ target_tracker_node:
     target_classes: [0]  # 0 = person (COCO)
     
     # Input topics
-    image_topic: "/berxel/color/image_raw"
-    depth_topic: "/berxel/depth/image_raw"
-    camera_info_topic: "/berxel/depth/camera_info"
+    image_topic: "/color/color_raw"
+    depth_topic: "/depth/depth_raw"
+    camera_info_topic: "/depth/camera_info"
     
     # ByteTrack parameters
     track_thresh: 0.5      # High confidence threshold for tracking

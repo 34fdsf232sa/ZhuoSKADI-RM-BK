@@ -61,8 +61,8 @@ pointcloud_fusion_node:
 depth_to_pointcloud_node:
   ros__parameters:
     # Input topics
-    depth_topic: "/berxel/depth/image_raw"
-    camera_info_topic: "/berxel/depth/camera_info"
+    depth_topic: "/depth/depth_raw"
+    camera_info_topic: "/depth/camera_info"
     
     # Output
     output_topic: "/berxel/depth/points"
