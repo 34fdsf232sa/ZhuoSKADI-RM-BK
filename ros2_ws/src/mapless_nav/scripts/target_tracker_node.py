@@ -21,6 +21,7 @@ from geometry_msgs.msg import PoseStamped, PoseArray, Point
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import Header
 
+import os
 from cv_bridge import CvBridge
 import numpy as np
 import cv2
@@ -257,20 +258,18 @@ class YOLODetector:
         if not ONNX_AVAILABLE:
             raise RuntimeError("ONNX Runtime not available")
         
-        # Select execution provider
+        # Select best available provider
+        available = ort.get_available_providers()
+
         providers = []
-        
-        # Try ROCm (AMD GPU)
-        if 'ROCMExecutionProvider' in ort.get_available_providers():
+        if 'ROCMExecutionProvider' in available and os.access('/dev/kfd', os.R_OK | os.W_OK):
             providers.append('ROCMExecutionProvider')
-        
-        # Try CUDA (NVIDIA GPU)
-        if 'CUDAExecutionProvider' in ort.get_available_providers():
+        if 'CUDAExecutionProvider' in available and any(
+                os.access(f'/dev/nvidia{i}', os.R_OK) for i in range(4)
+                if os.path.exists(f'/dev/nvidia{i}')):
             providers.append('CUDAExecutionProvider')
-        
-        # Fallback to CPU
         providers.append('CPUExecutionProvider')
-        
+
         self.session = ort.InferenceSession(model_path, providers=providers)
         self.input_name = self.session.get_inputs()[0].name
         

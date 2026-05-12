@@ -13,7 +13,7 @@ This launches:
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction, SetEnvironmentVariable
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -102,6 +102,7 @@ def generate_launch_description():
     
     # ==========================================================================
     # Target Tracker Node (YOLO + ByteTrack)
+    # GPU acceleration via ROCm: source scripts/setup_rocm_env.sh before launching
     # ==========================================================================
     target_tracker_node = Node(
         package='mapless_nav',
