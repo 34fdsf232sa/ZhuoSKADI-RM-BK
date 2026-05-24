@@ -15,10 +15,10 @@ pointcloud_fusion_node:
     # Target frame for fusion
     target_frame: "base_link"
     
-    # Synchronization
-    use_sync: false  # Set to true if all sensors have similar update rates
+    # Synchronization (PTP mode — all sensors on shared timebase)
+    use_sync: true  # PTP-synced timestamps allow tight approximate time sync
     sync_queue_size: 10
-    sync_slop: 0.1  # seconds tolerance for sync
+    sync_slop: 0.02  # seconds tolerance — PTP should give sub-ms sync, 20ms slop
     publish_rate: 20.0  # Hz
     
     # Voxel filter (downsampling)

@@ -1,0 +1,57 @@
+# =============================================================================
+# Point-LIO 配置 — Unitree L2 LiDAR
+#
+# Point-LIO 是 FAST-LIO 系列的增强版，直接使用点云中的每个点进行状态估计，
+# 无需特征提取，适用于非结构化环境。
+#
+# 启动方式:
+#   ros2 launch mapless_nav sensors.launch.py time_sync_mode:=ptp
+#   ros2 launch point_lio mapping.launch.py config_file:=pointlio_l2.yaml
+#
+# 输出:
+#   /Odometry (nav_msgs/Odometry)
+#   /tf: odom -> base_link
+# =============================================================================
+/**:
+    ros__parameters:
+        # PTP 时间同步: false 表示信任 PTP/gPTP 硬件同步，不需要软件时间对齐
+        # 只有当外部时间同步真的不可用时才设为 true
+        time_sync_en: false
+        time_offset_lidar_to_imu: 0.0
+
+        # LiDAR 预处理
+        lidar_type: 4                # 4 = generic pointcloud (L2 is not Livox-style)
+        scan_line: 1
+        blind: 0.3
+        timestamp_unit: 3            # nanoseconds
+        scan_rate: 10
+
+        # IMU 参数
+        imu_topic: "/unilidar/imu"
+        acc_cov: 0.2
+        gyr_cov: 0.05
+        b_acc_cov: 0.0001
+        b_gyr_cov: 0.0001
+
+        # 点云输入
+        lid_topic: "/unilidar/cloud"
+
+        # 外参 (LiDAR → IMU)
+        extrinsic_T: [0.0, 0.0, 0.5]
+        extrinsic_R: [1., 0., 0.,
+                      0., 1., 0.,
+                      0., 0., 1.]
+
+        # 体素滤波器
+        filter_size_surf: 0.3
+        filter_size_map: 0.5
+
+        # 迭代
+        max_iteration: 3
+        point_filter_num: 3
+
+        # 里程计输出
+        publish_odom_topic: "/odom_p2lio"
+        publish_tf: true
+        path_en: true
+        path_publish_rate: 10.0
