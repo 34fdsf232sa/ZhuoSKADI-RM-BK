@@ -76,3 +76,4 @@ ros2_ws/src/log/
 *.o
 *.a
 build/
+.mcp.json

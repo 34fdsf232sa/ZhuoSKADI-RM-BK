@@ -1,7 +1,7 @@
 /**:
     ros__parameters:
-        stream_flag : 2
-        stream_type : 3
+        stream_flag : 1
+        stream_type : 2
         depth_width : 640
         depth_height : 400
         color_width : 640

@@ -68,7 +68,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'initialize_type': 2,
-            'work_mode': 1,
+            'work_mode': 0,
             'use_system_timestamp': l2_use_system_ts,
             'range_min': 0.0,
             'range_max': 100.0,
@@ -76,7 +76,7 @@ def generate_launch_description():
             'lidar_port': 6101,
             'lidar_ip': '192.168.1.62',   # Unitree L2 LiDAR
             'local_port': 6201,
-            'local_ip': '192.168.1.2',    # NUC secondary IP (L2 sends to this addr)
+            'local_ip': '192.168.1.1',    # NUC IP that currently receives L2 UDP
             'cloud_frame': 'unilidar_lidar',
             'cloud_topic': 'unilidar/cloud',
             'imu_frame': 'unilidar_imu',

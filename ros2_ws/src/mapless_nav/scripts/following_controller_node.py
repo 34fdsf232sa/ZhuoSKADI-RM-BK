@@ -135,8 +135,7 @@ class FollowingControllerNode(Node):
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
         self.declare_parameter('odom_topic', '/odom')
         self.declare_parameter('scan_topic', '/scan')
-        self.declare_parameter('auto_enable', True)
-
+        
         # Get parameters
         self.target_distance = self.get_parameter('target_distance').value
         self.min_distance = self.get_parameter('min_distance').value
@@ -175,7 +174,7 @@ class FollowingControllerNode(Node):
         
         # State
         self.state = FollowingState.IDLE
-        self.enabled = self.get_parameter('auto_enable').value
+        self.enabled = False
         
         self.target_position: Optional[np.ndarray] = None
         self.target_time = 0.0
@@ -239,19 +238,20 @@ class FollowingControllerNode(Node):
     
     def target_callback(self, msg: PoseStamped):
         """Update target position"""
-        frame = msg.header.frame_id
-
-        # Camera optical frames (Z forward, X right, Y down) -> robot (X fwd, Y left, Z up)
-        if 'optical' in frame or 'camera' in frame:
-            cx, cy, cz = msg.pose.position.x, msg.pose.position.y, msg.pose.position.z
-            self.target_position = np.array([cz, -cx, -cy])
-        else:
-            self.target_position = np.array([
-                msg.pose.position.x,
-                msg.pose.position.y,
-                msg.pose.position.z])
-
+        # Convert from camera frame to robot frame
+        # Camera: Z forward, X right, Y down
+        # Robot: X forward, Y left, Z up
+        
+        cam_x = msg.pose.position.x
+        cam_y = msg.pose.position.y
+        cam_z = msg.pose.position.z
+        
+        # Transform: robot_x = cam_z, robot_y = -cam_x, robot_z = -cam_y
+        self.target_position = np.array([cam_z, -cam_x, -cam_y])
         self.target_time = time.time()
+        
+        self.get_logger().debug(
+            f"Target: x={self.target_position[0]:.2f}, y={self.target_position[1]:.2f}")
     
     def odom_callback(self, msg: Odometry):
         """Update robot position"""
